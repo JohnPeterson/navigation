@@ -45,6 +45,12 @@
 
 namespace move_base {
 
+  double poseDistance(const geometry_msgs::PoseStamped& pose_a, const geometry_msgs::PoseStamped& pose_b)
+  {
+    return sqrt((pose_a.pose.position.x - pose_b.pose.position.x) * (pose_a.pose.position.x - pose_b.pose.position.x) +
+                (pose_a.pose.position.y - pose_b.pose.position.y) * (pose_a.pose.position.y - pose_b.pose.position.y));
+  }
+
   MoveBase::MoveBase(tf::TransformListener& tf) :
     tf_(tf),
     as_(NULL),
@@ -474,6 +480,91 @@ namespace move_base {
     if(!planner_->makePlan(start, goal, plan) || plan.empty()){
       ROS_DEBUG_NAMED("move_base","Failed to find a  plan to point (%.2f, %.2f)", goal.pose.position.x, goal.pose.position.y);
       return false;
+    }
+
+    return true;
+  }
+
+  bool MoveBase::repairPlan(const geometry_msgs::PoseStamped& goal, std::vector<geometry_msgs::PoseStamped>& partial_plan, std::vector<geometry_msgs::PoseStamped>& plan)
+  {
+    boost::unique_lock<costmap_2d::Costmap2D::mutex_t> lock(*(planner_costmap_ros_->getCostmap()->getMutex()));
+
+    // no plan to repair
+    if (partial_plan.empty())
+    {
+      return false;
+    }
+
+    //make sure to set the plan to be empty initially
+    plan.clear();
+
+    //since this gets called on handle activate
+    if(planner_costmap_ros_ == NULL) {
+      ROS_ERROR("Planner costmap ROS is NULL, unable to create global plan");
+      return false;
+    }
+
+    //get the starting pose of the robot
+    tf::Stamped<tf::Pose> global_pose;
+    if(!planner_costmap_ros_->getRobotPose(global_pose)) {
+      ROS_WARN("Unable to get starting pose of robot, unable to create global plan");
+      return false;
+    }
+
+    geometry_msgs::PoseStamped start;
+    tf::poseStampedTFToMsg(global_pose, start);
+
+    // plan from start to first part of plan
+    size_t partial_plan_start_index = 0;
+    // TODO we should do obstacle detection to find first not in collision point of the partial plan
+
+    // check distance threshold
+    if (poseDistance(start, partial_plan[partial_plan_start_index]) >= 2.0)
+    {
+      // we aren't going to repair the plan, we should just plan from scratch
+      return false;
+    }
+
+    std::vector<geometry_msgs::PoseStamped> start_segment;
+    if(!planner_->makePlan(start, partial_plan[partial_plan_start_index], start_segment) || start_segment.empty()){
+      ROS_DEBUG_NAMED("move_base","Failed to find a  plan to start of segment (%.2f, %.2f)", partial_plan[partial_plan_start_index].pose.position.x, partial_plan[partial_plan_start_index].pose.position.y);
+      return false;
+    }
+
+    // plan from end of partial_plan to the goal
+    size_t partial_plan_end_index = partial_plan.size() - 1;
+    // TODO we should do obstacle detection to find the last not in collision point of the partial plan
+
+    // check distance threshold
+    if (poseDistance(goal, partial_plan[partial_plan_end_index]) >= 2.0)
+    {
+      // we aren't going to repair the plan, we should just plan from scratch
+      return false;
+    }
+
+    std::vector<geometry_msgs::PoseStamped> end_segment;
+    if(!planner_->makePlan(partial_plan[partial_plan_end_index], goal, end_segment) || end_segment.empty()){
+      ROS_DEBUG_NAMED("move_base","Failed to find a  plan to goal from end of segment (%.2f, %.2f)", goal.pose.position.x, goal.pose.position.y);
+      return false;
+    }
+
+    // now construct plan by appending concatenating things
+    // append start segment
+    for (std::vector<geometry_msgs::PoseStamped>::const_iterator it = start_segment.begin(); it != start_segment.end(); ++it)
+    {
+        plan.push_back(*it);
+    }
+
+    // append partial plan
+    for (std::vector<geometry_msgs::PoseStamped>::const_iterator it = partial_plan.begin(); it != partial_plan.end(); ++it)
+    {
+      plan.push_back(*it);
+    }
+
+    // append end end plan
+    for (std::vector<geometry_msgs::PoseStamped>::const_iterator it = end_segment.begin(); it != end_segment.end(); ++it)
+    {
+      plan.push_back(*it);
     }
 
     return true;

@@ -60,6 +60,14 @@
 #include "move_base/MoveBaseConfig.h"
 
 namespace move_base {
+  /**
+   * @brief x-y distance between two poses
+   * @param pose_a
+   * @param pose_b
+   * @param return distance in x y plane
+   */
+   double poseDistance(const geometry_msgs::PoseStamped& pose_a, const geometry_msgs::PoseStamped& pose_b);
+  
   //typedefs to help us out with the action server so that we don't hace to type so much
   typedef actionlib::SimpleActionServer<move_base_msgs::MoveBaseAction> MoveBaseActionServer;
 
@@ -126,6 +134,13 @@ namespace move_base {
        * @return  True if planning succeeds, false otherwise
        */
       bool makePlan(const geometry_msgs::PoseStamped& goal, std::vector<geometry_msgs::PoseStamped>& plan);
+
+      /**
+       * @brief Repairs a received plan
+       * @param 
+       * @return true if plan repair succeeds, false otherwise
+       */
+      bool repairPlan(const geometry_msgs::PoseStamped& goal, std::vector<geometry_msgs::PoseStamped>& partial_plan, std::vector<geometry_msgs::PoseStamped>& plan);
 
       /**
        * @brief  Load the recovery behaviors for the navigation stack from the parameter server
