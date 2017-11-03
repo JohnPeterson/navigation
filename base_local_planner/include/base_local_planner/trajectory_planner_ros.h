@@ -207,7 +207,10 @@ namespace base_local_planner {
       double rot_stopped_velocity_, trans_stopped_velocity_;
       double xy_goal_tolerance_, yaw_goal_tolerance_, min_in_place_vel_th_;
       std::vector<geometry_msgs::PoseStamped> global_plan_;
+      std::vector<double> global_plan_dists_;
+      int global_plan_cur_index_;
       bool prune_plan_;
+      double look_ahead_distance_;
       boost::recursive_mutex odom_lock_;
 
       double max_vel_th_, min_vel_th_;

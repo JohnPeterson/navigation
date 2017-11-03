@@ -56,6 +56,24 @@
 namespace base_local_planner {
 
   /**
+   * @brief finds the next local minima in distance to plan from the current pose
+   * @param global_pose the pose of the robot in the global frame
+   * @param path the plan
+   * @param start_index the starting index
+   * @param next_min_index the output index
+   * @return success
+   */
+  bool getNextMinimaDistance(const tf::Stamped<tf::Pose>& global_pose, const std::vector<geometry_msgs::PoseStamped>& path, const size_t& start_index, size_t& next_min_index);
+
+  /**
+   * @brief x-y distance between two poses
+   * @param pose_a
+   * @param pose_b
+   * @param return distance in x y plane
+   */
+   double poseDistance(const geometry_msgs::PoseStamped& pose_a, const geometry_msgs::PoseStamped& pose_b);
+
+  /**
    * @brief  return squared distance to check if the goal position has been achieved
    * @param  global_pose The pose of the robot in the global frame
    * @param  goal_x The desired x value for the goal

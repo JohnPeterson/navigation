@@ -66,6 +66,37 @@ namespace base_local_planner {
     pub.publish(gui_path);
   }
 
+  double poseDistance(const geometry_msgs::PoseStamped& pose_a, const geometry_msgs::PoseStamped& pose_b)
+  {
+    return sqrt((pose_a.pose.position.x - pose_b.pose.position.x) * (pose_a.pose.position.x - pose_b.pose.position.x) +
+                (pose_a.pose.position.y - pose_b.pose.position.y) * (pose_a.pose.position.y - pose_b.pose.position.y));
+  }
+
+  bool getNextMinimaDistance(const tf::Stamped<tf::Pose>& global_pose, const std::vector<geometry_msgs::PoseStamped>& path, const size_t& start_index, size_t& next_min_index)
+  {
+    if(start_index >= path.size()){
+      return false;
+    }
+
+    next_min_index = start_index;
+    double min_distance = getGoalPositionDistance(global_pose, path[next_min_index].pose.position.x, path[next_min_index].pose.position.y);
+
+    bool dist_decreasing = true;
+    do{
+      double next_distance = getGoalPositionDistance(global_pose, path[next_min_index + 1].pose.position.x, path[next_min_index + 1].pose.position.y);
+
+      if (next_distance > min_distance){
+        dist_decreasing = false;
+      }
+      else {
+        min_distance = next_distance;
+        ++next_min_index;
+      }
+    }while(dist_decreasing && (next_min_index + 1 < path.size()));
+
+    return true;
+  }
+
   void prunePlan(const tf::Stamped<tf::Pose>& global_pose, std::vector<geometry_msgs::PoseStamped>& plan, std::vector<geometry_msgs::PoseStamped>& global_plan){
     ROS_ASSERT(global_plan.size() >= plan.size());
     std::vector<geometry_msgs::PoseStamped>::iterator it = plan.begin();

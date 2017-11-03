@@ -72,10 +72,10 @@ namespace base_local_planner {
   }
 
   TrajectoryPlannerROS::TrajectoryPlannerROS() :
-      world_model_(NULL), tc_(NULL), costmap_ros_(NULL), tf_(NULL), setup_(false), initialized_(false), odom_helper_("odom") {}
+      world_model_(NULL), tc_(NULL), costmap_ros_(NULL), tf_(NULL), global_plan_cur_index_(-1), setup_(false), initialized_(false), odom_helper_("odom") {}
 
   TrajectoryPlannerROS::TrajectoryPlannerROS(std::string name, tf::TransformListener* tf, costmap_2d::Costmap2DROS* costmap_ros) :
-      world_model_(NULL), tc_(NULL), costmap_ros_(NULL), tf_(NULL), setup_(false), initialized_(false), odom_helper_("odom") {
+      world_model_(NULL), tc_(NULL), costmap_ros_(NULL), tf_(NULL), global_plan_cur_index_(-1), setup_(false), initialized_(false), odom_helper_("odom") {
 
       //initialize the planner
       initialize(name, tf, costmap_ros);
@@ -114,6 +114,7 @@ namespace base_local_planner {
       global_frame_ = costmap_ros_->getGlobalFrameID();
       robot_base_frame_ = costmap_ros_->getBaseFrameID();
       private_nh.param("prune_plan", prune_plan_, true);
+      private_nh.param("look_ahead_distance", look_ahead_distance_, 3.0);
 
       private_nh.param("yaw_goal_tolerance", yaw_goal_tolerance_, 0.05);
       private_nh.param("xy_goal_tolerance", xy_goal_tolerance_, 0.10);
@@ -358,9 +359,62 @@ namespace base_local_planner {
       return false;
     }
 
+    // update the current index for the new plan
+    if (orig_global_plan.empty())
+    {
+      global_plan_cur_index_ = -1; // set back to uninitialized
+    }
+    else
+    {
+      if (global_plan_cur_index_ < 0)
+      {
+        // initialize the cur point, just find the closest point to the robot
+        tf::Stamped<tf::Pose> global_pose;
+        if (costmap_ros_->getRobotPose(global_pose)) {
+          global_plan_cur_index_ = 0;
+          double closest_distance = getGoalPositionDistance(global_pose, orig_global_plan[global_plan_cur_index_].pose.position.x, orig_global_plan[global_plan_cur_index_].pose.position.y);
+          for (int ii = 1; ii < orig_global_plan.size(); ++ii)
+          {
+            double next_distance = getGoalPositionDistance(global_pose, orig_global_plan[ii].pose.position.x, orig_global_plan[ii].pose.position.y);
+            if (next_distance < closest_distance)
+            {
+              global_plan_cur_index_ = ii;
+              closest_distance = next_distance;
+            }
+          }
+        }
+        // otherwise we will just leave it uninitialized
+      }
+      else
+      {
+        // if we have a previously initialized current point, find the closest point in
+        // the new plan to that point
+        int new_closest_point = 0;
+        double closest_distance = poseDistance(global_plan_[global_plan_cur_index_], orig_global_plan[new_closest_point]);
+        for (int ii = 1; ii < orig_global_plan.size(); ++ii)
+        {
+          double test_distance = poseDistance(global_plan_[global_plan_cur_index_], orig_global_plan[ii]);
+          if (test_distance < closest_distance)
+          {
+            new_closest_point = ii;
+            closest_distance = test_distance;
+          }
+        }
+        global_plan_cur_index_ = new_closest_point;
+      }
+    }
+
     //reset the global plan
     global_plan_.clear();
+    global_plan_dists_.clear();
     global_plan_ = orig_global_plan;
+
+    // compute distances to avoid having to recompute later on each iteration
+    if (!global_plan_.empty()) {
+      for(size_t pp = 0; pp < global_plan_.size() - 1; ++pp) {
+        global_plan_dists_.push_back(poseDistance(global_plan_[pp], global_plan_[pp+1]));
+      }
+    }
     
     //when we get a new plan, we also want to clear any latch we may have on goal tolerances
     xy_tolerance_latch_ = false;
@@ -382,15 +436,52 @@ namespace base_local_planner {
     }
 
     std::vector<geometry_msgs::PoseStamped> transformed_plan;
-    //get the global plan in our frame
-    if (!transformGlobalPlan(*tf_, global_plan_, global_pose, *costmap_, global_frame_, transformed_plan)) {
-      ROS_WARN("Could not transform the global plan to the frame of the controller");
-      return false;
-    }
+    if ((look_ahead_distance_ <= 0.0) || (global_plan_cur_index_ < 0) || (global_plan_cur_index_ >= global_plan_dists_.size()))
+    {
+      //get the global plan in our frame
+      if (!transformGlobalPlan(*tf_, global_plan_, global_pose, *costmap_, global_frame_, transformed_plan)) {
+        ROS_WARN("Could not transform the global plan to the frame of the controller");
+        return false;
+      }
 
-    //now we'll prune the plan based on the position of the robot
-    if(prune_plan_)
-      prunePlan(global_pose, transformed_plan, global_plan_);
+      //now we'll prune the plan based on the position of the robot
+      if(prune_plan_)
+        prunePlan(global_pose, transformed_plan, global_plan_);
+    }
+    else
+    {
+      // update the current index
+      size_t new_cur_index = static_cast<size_t>(global_plan_cur_index_);
+      if (getNextMinimaDistance(global_pose, global_plan_, new_cur_index, new_cur_index))
+      {
+        global_plan_cur_index_ = static_cast<int>(new_cur_index);
+      }
+      else
+      {
+        ROS_WARN("Failed to update current index with next minima");
+      }
+
+      // lets make a sub set of the plan and use that instead, by not using the whole plan
+      // we use a subset of the plan determined by look_ahead distance from the current index
+      double total_dist = 0.0;
+      std::vector<geometry_msgs::PoseStamped> partial_plan;
+      partial_plan.push_back(global_plan_[global_plan_cur_index_]);
+      for (int ii = global_plan_cur_index_; ii < global_plan_dists_.size(); ++ii)
+      {
+        partial_plan.push_back(global_plan_[ii + 1]);
+        total_dist += global_plan_dists_[ii];
+        if (total_dist > look_ahead_distance_)
+        {
+          break;
+        }
+      }
+
+      //get the global plan in our frame
+      if (!transformGlobalPlan(*tf_, partial_plan, global_pose, *costmap_, global_frame_, transformed_plan)) {
+        ROS_WARN("Could not transform the global plan to the frame of the controller");
+        return false;
+      }
+    }
 
     tf::Stamped<tf::Pose> drive_cmds;
     drive_cmds.frame_id_ = robot_base_frame_;
