@@ -76,6 +76,7 @@ namespace move_base {
     private_nh.param("global_costmap/global_frame", global_frame_, std::string("/map"));
     private_nh.param("planner_frequency", planner_frequency_, 0.0);
     private_nh.param("controller_frequency", controller_frequency_, 20.0);
+    private_nh.param("max_repair_distance", max_repair_distance_, 3.0);
     private_nh.param("planner_patience", planner_patience_, 5.0);
     private_nh.param("controller_patience", controller_patience_, 15.0);
     private_nh.param("max_planning_retries", max_planning_retries_, -1);  // disabled by default
@@ -551,7 +552,7 @@ namespace move_base {
     while (start_segment.empty() && (!partial_plan.empty()))
     {
       // check distance threshold
-      if (poseDistance(start, partial_plan.front()) >= 2.0)
+      if (poseDistance(start, partial_plan.front()) >= max_repair_distance_)
       {
         // we aren't going to repair the plan, we should just plan from scratch
         partial_plan.clear();
@@ -570,7 +571,7 @@ namespace move_base {
     while (end_segment.empty() && (!partial_plan.empty()))
     {
       // check distance threshold
-      if (poseDistance(goal, partial_plan.back()) >= 2.0)
+      if (poseDistance(goal, partial_plan.back()) >= max_repair_distance_)
       {
         // we aren't going to repair the plan, we should just plan from scratch
         partial_plan.clear();

@@ -203,7 +203,7 @@ namespace move_base {
       unsigned int recovery_index_;
 
       tf::Stamped<tf::Pose> global_pose_;
-      double planner_frequency_, controller_frequency_, inscribed_radius_, circumscribed_radius_;
+      double planner_frequency_, controller_frequency_, inscribed_radius_, circumscribed_radius_, max_repair_distance_;
       double planner_patience_, controller_patience_;
       int32_t max_planning_retries_;
       uint32_t planning_retries_;
