@@ -514,6 +514,34 @@ namespace move_base {
     geometry_msgs::PoseStamped start;
     tf::poseStampedTFToMsg(global_pose, start);
 
+    // trim the partial plan to find the first local minima in distance to the start
+    // we do this to shrink the partial plan as we make progress
+    // we use the first local minimum in distance to avoid skippiing a leg in the plan
+    {
+      std::list<geometry_msgs::PoseStamped>::iterator it = partial_plan.begin();
+      double min_distance = poseDistance(start, *it);
+      bool dist_decreasing = true;
+
+      while (dist_decreasing && (partial_plan.size() > 1))
+      {
+        std::list<geometry_msgs::PoseStamped>::iterator next = it;
+        ++next;
+
+        double next_dist = poseDistance(start, *next);
+
+        if (next_dist >= min_distance)
+        {
+          dist_decreasing = false;
+        }
+        else
+        {
+          min_distance = next_dist;
+          partial_plan.erase(it); // remove this point, we are past it
+          it = next;
+        }
+      }
+    }
+
     // TODO check to see if the start and goal are in collision
     // but apparently the planner beneath this says that the start can never be in collision
     // and it implements a tolerance checking that would be a pain to do at this level
@@ -731,14 +759,28 @@ namespace move_base {
       }
       ros::Time start_time = ros::Time::now();
 
-      //time to plan! get a copy of the goal and unlock the mutex
+      //time to plan! get a copy of the goal
       geometry_msgs::PoseStamped temp_goal = planner_goal_;
-      lock.unlock();
-      ROS_DEBUG_NAMED("move_base_plan_thread","Planning...");
 
-      //run planner
       planner_plan_->clear();
-      bool gotPlan = n.ok() && makePlan(temp_goal, *planner_plan_);
+
+      bool gotPlan = false;
+      if (!partial_plan_.empty())
+      {
+        // attempt plan repair using the existing partial plan
+        ROS_DEBUG_NAMED("move_base_plan_thread","Repairing...");
+        gotPlan = repairPlan(temp_goal, partial_plan_, *planner_plan_);
+      }
+
+      lock.unlock();
+
+      // if we didn't already use the plan repair function, or it failed, plan from scratch
+      if (!gotPlan)
+      {
+        ROS_DEBUG_NAMED("move_base_plan_thread","Planning...");
+        gotPlan = n.ok() && makePlan(temp_goal, *planner_plan_);
+      }
+      
 
       if(gotPlan){
         ROS_DEBUG_NAMED("move_base_plan_thread","Got Plan with %zu points!", planner_plan_->size());
@@ -858,6 +900,15 @@ namespace move_base {
           //we have a new goal so make sure the planner is awake
           lock.lock();
           planner_goal_ = goal;
+
+          // accept external plan if applicable
+          partial_plan_.clear();
+          for (std::vector<geometry_msgs::PoseStamped>::const_iterator pt = new_goal.path.poses.begin(); pt != new_goal.path.poses.end(); ++pt)
+          {
+            geometry_msgs::PoseStamped path_point = goalToGlobalFrame(*pt);
+            partial_plan_.push_back(path_point);
+          }
+
           runPlanner_ = true;
           planner_cond_.notify_one();
           lock.unlock();
