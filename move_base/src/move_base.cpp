@@ -485,7 +485,7 @@ namespace move_base {
     return true;
   }
 
-  bool MoveBase::repairPlan(const geometry_msgs::PoseStamped& goal, std::vector<geometry_msgs::PoseStamped>& partial_plan, std::vector<geometry_msgs::PoseStamped>& plan)
+  bool MoveBase::repairPlan(const geometry_msgs::PoseStamped& goal, std::list<geometry_msgs::PoseStamped>& partial_plan, std::vector<geometry_msgs::PoseStamped>& plan)
   {
     boost::unique_lock<costmap_2d::Costmap2D::mutex_t> lock(*(planner_costmap_ros_->getCostmap()->getMutex()));
 
@@ -514,38 +514,46 @@ namespace move_base {
     geometry_msgs::PoseStamped start;
     tf::poseStampedTFToMsg(global_pose, start);
 
+    // TODO check to see if the start and goal are in collision
+    // but apparently the planner beneath this says that the start can never be in collision
+    // and it implements a tolerance checking that would be a pain to do at this level
+
     // plan from start to first part of plan
-    size_t partial_plan_start_index = 0;
-    // TODO we should do obstacle detection to find first not in collision point of the partial plan
-
-    // check distance threshold
-    if (poseDistance(start, partial_plan[partial_plan_start_index]) >= 2.0)
-    {
-      // we aren't going to repair the plan, we should just plan from scratch
-      return false;
-    }
-
     std::vector<geometry_msgs::PoseStamped> start_segment;
-    if(!planner_->makePlan(start, partial_plan[partial_plan_start_index], start_segment) || start_segment.empty()){
-      ROS_DEBUG_NAMED("move_base","Failed to find a  plan to start of segment (%.2f, %.2f)", partial_plan[partial_plan_start_index].pose.position.x, partial_plan[partial_plan_start_index].pose.position.y);
-      return false;
+    while (start_segment.empty() && (!partial_plan.empty()))
+    {
+      // check distance threshold
+      if (poseDistance(start, partial_plan.front()) >= 2.0)
+      {
+        // we aren't going to repair the plan, we should just plan from scratch
+        partial_plan.clear();
+        return false;
+      }
+
+      // if we failed to plan to it, the point might be in collision, so we will try the next point
+      if ((!planner_->makePlan(start, partial_plan.front(), start_segment)) || start_segment.empty())
+      {
+        partial_plan.pop_front();
+      }
     }
 
     // plan from end of partial_plan to the goal
-    size_t partial_plan_end_index = partial_plan.size() - 1;
-    // TODO we should do obstacle detection to find the last not in collision point of the partial plan
-
-    // check distance threshold
-    if (poseDistance(goal, partial_plan[partial_plan_end_index]) >= 2.0)
-    {
-      // we aren't going to repair the plan, we should just plan from scratch
-      return false;
-    }
-
     std::vector<geometry_msgs::PoseStamped> end_segment;
-    if(!planner_->makePlan(partial_plan[partial_plan_end_index], goal, end_segment) || end_segment.empty()){
-      ROS_DEBUG_NAMED("move_base","Failed to find a  plan to goal from end of segment (%.2f, %.2f)", goal.pose.position.x, goal.pose.position.y);
-      return false;
+    while (end_segment.empty() && (!partial_plan.empty()))
+    {
+      // check distance threshold
+      if (poseDistance(goal, partial_plan.back()) >= 2.0)
+      {
+        // we aren't going to repair the plan, we should just plan from scratch
+        partial_plan.clear();
+        return false;
+      }
+
+      // if we failed to plan then the last point is in collision
+      if(!planner_->makePlan(partial_plan.back(), goal, end_segment) || end_segment.empty())
+      {
+        partial_plan.pop_back();
+      }
     }
 
     // now construct plan by appending concatenating things
@@ -556,9 +564,79 @@ namespace move_base {
     }
 
     // append partial plan
-    for (std::vector<geometry_msgs::PoseStamped>::const_iterator it = partial_plan.begin(); it != partial_plan.end(); ++it)
+
+    // if either is in collision we should fail, but the partial plan is still potentially useful
+    // check to see if start is in collision
+
+    std::list<geometry_msgs::PoseStamped>::iterator it = partial_plan.begin();
+    while (it != partial_plan.end())
     {
-      plan.push_back(*it);
+      unsigned int mx, my;
+      if(!planner_costmap_ros_->getCostmap()->worldToMap(it->pose.position.x, it->pose.position.y, mx, my))
+      {
+        // if we failed to look up the position, it is off the map, clear out this plan because it is invalid
+        partial_plan.clear();
+        return false;
+      }
+
+      if (planner_costmap_ros_->getCostmap()->getCost(mx, my) == costmap_2d::LETHAL_OBSTACLE)
+      {
+        do
+        {
+          // if in collision, then it is the first in collision, lets delete it and keep going until we find
+          // one not in collision
+          // next element
+          std::list<geometry_msgs::PoseStamped>::iterator jt = it;
+          ++jt;
+
+          // it is in collision
+          partial_plan.erase(it);
+
+          // just a dummy check, this should never occur
+          if (jt == partial_plan.end())
+          {
+            // something went wrong, because we knew we successfully planned to the last element of the path
+            // to construct the end,
+            ROS_ERROR("last element reported in collision, but we already planned to this point successfull from the goal");
+            partial_plan.clear();
+            return false;
+          }
+
+          it = jt;
+          if(!planner_costmap_ros_->getCostmap()->worldToMap(it->pose.position.x, it->pose.position.y, mx, my))
+          {
+            // if we failed to look up the position, it is off the map, clear out this plan because it is invalid
+            partial_plan.clear();
+            return false;
+          }
+        } while(planner_costmap_ros_->getCostmap()->getCost(mx, my) == costmap_2d::LETHAL_OBSTACLE);
+
+        // now the last point in plan is valid, and it should point to something valid
+        // plan a repair segment
+        std::vector<geometry_msgs::PoseStamped> repair_segment;
+        if(!planner_->makePlan((*(plan.rbegin())), *it, repair_segment) || repair_segment.empty())
+        {
+          ROS_ERROR("Repair failed!");
+          partial_plan.clear();
+          return false;
+        }
+
+        // now put the repair segment into both the partial plan, and the output plan
+        for (std::vector<geometry_msgs::PoseStamped>::const_iterator rt = repair_segment.begin(); rt != repair_segment.end(); ++rt)
+        {
+          plan.push_back(*rt);
+          partial_plan.insert(it, *rt); // put this before the current position
+        }
+
+        // and move to the next point
+        ++it;
+      }
+      else
+      {
+        // if not in collision, add it
+        plan.push_back(*it);
+        ++it;
+      }
     }
 
     // append end end plan
