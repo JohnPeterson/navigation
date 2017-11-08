@@ -98,6 +98,7 @@ namespace move_base {
 
     ros::NodeHandle action_nh("move_base");
     action_goal_pub_ = action_nh.advertise<move_base_msgs::MoveBaseActionGoal>("goal", 1);
+    repaired_plan_pub_ = action_nh.advertise<nav_msgs::Path>("repaired_plan", 1);
 
     //we'll provide a mechanism for some people to send goals as PoseStamped messages over a topic
     //they won't get any useful information back about its status, but this is useful for tools
@@ -515,32 +516,49 @@ namespace move_base {
     geometry_msgs::PoseStamped start;
     tf::poseStampedTFToMsg(global_pose, start);
 
-    // trim the partial plan to find the first local minima in distance to the start
-    // we do this to shrink the partial plan as we make progress
-    // we use the first local minimum in distance to avoid skippiing a leg in the plan
-    {
-      std::list<geometry_msgs::PoseStamped>::iterator it = partial_plan.begin();
-      double min_distance = poseDistance(start, *it);
-      bool dist_decreasing = true;
+    // if the local planner doesn't support keeping track of the current position
+    // along the path, then just use the point closest to the vehicle
+    geometry_msgs::PoseStamped erase_pose_target = start;
+    std::list<geometry_msgs::PoseStamped>::iterator erase_target = partial_plan.begin();
 
-      while (dist_decreasing && (partial_plan.size() > 1))
+    geometry_msgs::PoseStamped local_planner_cur_pose;
+    if (tc_ && (tc_->getProgress(local_planner_cur_pose)))
+    {
+      erase_pose_target = local_planner_cur_pose;
+    }
+
+    // find the point closest to the pose target
+    {
+      double min_distance = std::numeric_limits<double>::infinity();
+      for (std::list<geometry_msgs::PoseStamped>::iterator it = partial_plan.begin(); it != partial_plan.end(); ++it)
       {
+        double it_dist = poseDistance(erase_pose_target, *it);
+
+        if (it_dist < min_distance)
+        {
+          min_distance = it_dist;
+          erase_target = it;
+        }
+      }
+
+      // now erase up to the erase target (exclusive)
+      std::list<geometry_msgs::PoseStamped>::iterator it = partial_plan.begin();
+      size_t erase_cnt = 0;
+      while (partial_plan.size() > 1)
+      {
+        if (it == erase_target)
+        {
+          break;
+        }
+
         std::list<geometry_msgs::PoseStamped>::iterator next = it;
         ++next;
 
-        double next_dist = poseDistance(start, *next);
-
-        if (next_dist >= min_distance)
-        {
-          dist_decreasing = false;
-        }
-        else
-        {
-          min_distance = next_dist;
-          partial_plan.erase(it); // remove this point, we are past it
-          it = next;
-        }
+        partial_plan.erase(it);
+        it = next;
+        ++erase_cnt;
       }
+      ROS_INFO("global replanning erased %lu elements %lu remaining", erase_cnt, partial_plan.size());
     }
 
     // TODO check to see if the start and goal are in collision
@@ -673,6 +691,14 @@ namespace move_base {
     {
       plan.push_back(*it);
     }
+
+    // publish repaired plan for debugging purposes
+    nav_msgs::Path path_msg;
+    path_msg.header.stamp = start.header.stamp;
+    path_msg.header.frame_id = start.header.frame_id;
+    path_msg.poses = plan;
+
+    repaired_plan_pub_.publish(path_msg);
 
     return true;
   }

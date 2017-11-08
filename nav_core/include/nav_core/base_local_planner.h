@@ -78,6 +78,16 @@ namespace nav_core {
       virtual void initialize(std::string name, tf::TransformListener* tf, costmap_2d::Costmap2DROS* costmap_ros) = 0;
 
       /**
+       * @brief how far along the plan are we
+       * @param output position
+       * @return True if successful, false if we don't support the tracking
+       */
+      bool getProgress(geometry_msgs::PoseStamped& global_pose)
+      {
+        return false;
+      }
+
+      /**
        * @brief  Virtual destructor for the interface
        */
       virtual ~BaseLocalPlanner(){}

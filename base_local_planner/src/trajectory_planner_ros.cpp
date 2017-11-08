@@ -359,26 +359,28 @@ namespace base_local_planner {
       return false;
     }
 
+    int global_plan_cur_index = global_plan_cur_index_;
+
     // update the current index for the new plan
     if (orig_global_plan.empty())
     {
-      global_plan_cur_index_ = -1; // set back to uninitialized
+      global_plan_cur_index = -1; // set back to uninitialized
     }
     else
     {
-      if (global_plan_cur_index_ < 0)
+      if (global_plan_cur_index < 0)
       {
         // initialize the cur point, just find the closest point to the robot
         tf::Stamped<tf::Pose> global_pose;
         if (costmap_ros_->getRobotPose(global_pose)) {
-          global_plan_cur_index_ = 0;
-          double closest_distance = getGoalPositionDistance(global_pose, orig_global_plan[global_plan_cur_index_].pose.position.x, orig_global_plan[global_plan_cur_index_].pose.position.y);
+          global_plan_cur_index = 0;
+          double closest_distance = getGoalPositionDistance(global_pose, orig_global_plan[global_plan_cur_index].pose.position.x, orig_global_plan[global_plan_cur_index].pose.position.y);
           for (int ii = 1; ii < orig_global_plan.size(); ++ii)
           {
             double next_distance = getGoalPositionDistance(global_pose, orig_global_plan[ii].pose.position.x, orig_global_plan[ii].pose.position.y);
             if (next_distance < closest_distance)
             {
-              global_plan_cur_index_ = ii;
+              global_plan_cur_index = ii;
               closest_distance = next_distance;
             }
           }
@@ -390,17 +392,28 @@ namespace base_local_planner {
         // if we have a previously initialized current point, find the closest point in
         // the new plan to that point
         int new_closest_point = 0;
-        double closest_distance = poseDistance(global_plan_[global_plan_cur_index_], orig_global_plan[new_closest_point]);
+        double closest_distance = poseDistance(global_plan_[global_plan_cur_index], orig_global_plan[new_closest_point]);
         for (int ii = 1; ii < orig_global_plan.size(); ++ii)
         {
-          double test_distance = poseDistance(global_plan_[global_plan_cur_index_], orig_global_plan[ii]);
+          double test_distance = poseDistance(global_plan_[global_plan_cur_index], orig_global_plan[ii]);
           if (test_distance < closest_distance)
           {
             new_closest_point = ii;
             closest_distance = test_distance;
           }
         }
-        global_plan_cur_index_ = new_closest_point;
+        global_plan_cur_index = new_closest_point;
+      }
+    }
+    
+    // update the current index
+    {
+      boost::lock_guard<boost::mutex> guard(global_plan_cur_index_mtx_);
+      global_plan_cur_index_ = global_plan_cur_index;
+
+      if (global_plan_cur_index_ >= 0)
+      {
+        global_plan_cur_pose_ = orig_global_plan[global_plan_cur_index_];
       }
     }
 
@@ -454,7 +467,14 @@ namespace base_local_planner {
       size_t new_cur_index = static_cast<size_t>(global_plan_cur_index_);
       if (getNextMinimaDistance(global_pose, global_plan_, new_cur_index, new_cur_index))
       {
+        // only need to lock here because we are updating it
+        boost::lock_guard<boost::mutex> guard(global_plan_cur_index_mtx_);
         global_plan_cur_index_ = static_cast<int>(new_cur_index);
+
+        if (global_plan_cur_index_ >= 0)
+        {
+          global_plan_cur_pose_ = global_plan_[global_plan_cur_index_];
+        }
       }
       else
       {
@@ -614,6 +634,22 @@ namespace base_local_planner {
     publishPlan(transformed_plan, g_plan_pub_);
     publishPlan(local_plan, l_plan_pub_);
     return true;
+  }
+
+  bool TrajectoryPlannerROS::getProgress(geometry_msgs::PoseStamped& global_pose)
+  {
+    // only need to lock here because we are updating it
+    boost::lock_guard<boost::mutex> guard(global_plan_cur_index_mtx_);
+
+    if (global_plan_cur_index_ >= 0)
+    {
+      global_pose = global_plan_cur_pose_;
+      return true;
+    }
+    else
+    {
+      return false;
+    }
   }
 
   bool TrajectoryPlannerROS::checkTrajectory(double vx_samp, double vy_samp, double vtheta_samp, bool update_map){

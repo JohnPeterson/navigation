@@ -159,6 +159,8 @@ namespace base_local_planner {
         return initialized_;
       }
 
+      bool getProgress(geometry_msgs::PoseStamped& global_pose);
+
       /** @brief Return the inner TrajectoryPlanner object.  Only valid after initialize(). */
       TrajectoryPlanner* getPlanner() const { return tc_; }
 
@@ -208,7 +210,9 @@ namespace base_local_planner {
       double xy_goal_tolerance_, yaw_goal_tolerance_, min_in_place_vel_th_;
       std::vector<geometry_msgs::PoseStamped> global_plan_;
       std::vector<double> global_plan_dists_;
+      boost::mutex global_plan_cur_index_mtx_;
       int global_plan_cur_index_;
+      geometry_msgs::PoseStamped global_plan_cur_pose_;
       bool prune_plan_;
       double look_ahead_distance_;
       boost::recursive_mutex odom_lock_;
