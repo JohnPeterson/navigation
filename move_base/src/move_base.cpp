@@ -852,6 +852,20 @@ namespace move_base {
     //we have a goal so start the planner
     boost::unique_lock<boost::recursive_mutex> lock(planner_mutex_);
     planner_goal_ = goal;
+
+    if (!move_base_goal->path.poses.empty())
+    {
+      ROS_INFO("Move Base received new plan in action, %lu", move_base_goal->path.poses.size());
+    }
+
+    // accept external plan if applicable
+    partial_plan_.clear();
+    for (std::vector<geometry_msgs::PoseStamped>::const_iterator pt = move_base_goal->path.poses.begin(); pt != move_base_goal->path.poses.end(); ++pt)
+    {
+      geometry_msgs::PoseStamped path_point = goalToGlobalFrame(*pt);
+      partial_plan_.push_back(path_point);
+    }
+
     runPlanner_ = true;
     planner_cond_.notify_one();
     lock.unlock();
@@ -901,6 +915,11 @@ namespace move_base {
           //we have a new goal so make sure the planner is awake
           lock.lock();
           planner_goal_ = goal;
+
+          if (!new_goal.path.poses.empty())
+          {
+            ROS_INFO("Move Base received new plan in action, %lu", new_goal.path.poses.size());
+          }
 
           // accept external plan if applicable
           partial_plan_.clear();
