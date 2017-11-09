@@ -214,6 +214,7 @@ namespace base_local_planner {
       int global_plan_cur_index_;
       geometry_msgs::PoseStamped global_plan_cur_pose_;
       bool prune_plan_;
+      double ignore_monotonic_distance_;
       double look_ahead_distance_;
       boost::recursive_mutex odom_lock_;
 

@@ -115,6 +115,7 @@ namespace base_local_planner {
       robot_base_frame_ = costmap_ros_->getBaseFrameID();
       private_nh.param("prune_plan", prune_plan_, true);
       private_nh.param("look_ahead_distance", look_ahead_distance_, 3.0);
+      private_nh.param("ignore_monotonic_distance", ignore_monotonic_distance_, 0.75);
 
       private_nh.param("yaw_goal_tolerance", yaw_goal_tolerance_, 0.05);
       private_nh.param("xy_goal_tolerance", xy_goal_tolerance_, 0.10);
@@ -465,7 +466,7 @@ namespace base_local_planner {
     {
       // update the current index
       size_t new_cur_index = static_cast<size_t>(global_plan_cur_index_);
-      if (getNextMinimaDistance(global_pose, global_plan_, new_cur_index, new_cur_index))
+      if (getNextMinimaDistance(global_pose, global_plan_, global_plan_dists_, new_cur_index, new_cur_index, ignore_monotonic_distance_))
       {
         // only need to lock here because we are updating it
         boost::lock_guard<boost::mutex> guard(global_plan_cur_index_mtx_);
@@ -494,11 +495,16 @@ namespace base_local_planner {
                                    (global_plan_[global_plan_cur_index_].pose.position.x - global_plan_[ii + 1].pose.position.x) +
                                    (global_plan_[global_plan_cur_index_].pose.position.y - global_plan_[ii + 1].pose.position.y) *
                                    (global_plan_[global_plan_cur_index_].pose.position.y - global_plan_[ii + 1].pose.position.y));
-        if (cur_distance < max_distance)
+        if ((cur_distance < max_distance) && (cur_distance > ignore_monotonic_distance_))
         {
+          // use the goal tolerance to allow this to go around corners that we are close to
           break;
         }
-        max_distance = cur_distance;
+
+        if (cur_distance >= max_distance)
+        {
+          max_distance = cur_distance;
+        }
 
         partial_plan.push_back(global_plan_[ii + 1]);
         total_dist += global_plan_dists_[ii];
@@ -510,7 +516,7 @@ namespace base_local_planner {
       }
 
       //get the global plan in our frame
-      if (!transformGlobalPlan(*tf_, partial_plan, global_pose, *costmap_, global_frame_, transformed_plan)) {
+      if (!transformPartialPlan(*tf_, partial_plan, global_frame_, transformed_plan)) {
         ROS_WARN("Could not transform the global plan to the frame of the controller");
         return false;
       }

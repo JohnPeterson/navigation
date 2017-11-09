@@ -72,7 +72,7 @@ namespace base_local_planner {
                 (pose_a.pose.position.y - pose_b.pose.position.y) * (pose_a.pose.position.y - pose_b.pose.position.y));
   }
 
-  bool getNextMinimaDistance(const tf::Stamped<tf::Pose>& global_pose, const std::vector<geometry_msgs::PoseStamped>& path, const size_t& start_index, size_t& next_min_index)
+  bool getNextMinimaDistance(const tf::Stamped<tf::Pose>& global_pose, const std::vector<geometry_msgs::PoseStamped>& path, const std::vector<double>& path_distances, const size_t& start_index, size_t& next_min_index, const double& jump_threshold)
   {
     if(start_index >= path.size()){
       return false;
@@ -87,6 +87,28 @@ namespace base_local_planner {
 
       if (next_distance > min_distance){
         dist_decreasing = false;
+
+        if ((jump_threshold > 0.0) && (path.size() == path_distances.size() + 1))
+        {
+          // look for another minima within the total distance
+          double total_dist = 0.0;
+          size_t test_next_min_index = next_min_index;
+          while ((total_dist < jump_threshold) && (test_next_min_index + 1 < path.size()))
+          {
+            double other_distance = getGoalPositionDistance(global_pose, path[test_next_min_index + 1].pose.position.x, path[test_next_min_index + 1].pose.position.y);
+
+            if (other_distance <= min_distance)
+            {
+              next_min_index = test_next_min_index;
+              dist_decreasing = true;
+              min_distance = other_distance;
+              break;
+            }
+
+            total_dist += path_distances[test_next_min_index];
+            ++test_next_min_index;
+          }
+        }
       }
       else {
         min_distance = next_distance;
@@ -114,6 +136,73 @@ namespace base_local_planner {
       it = plan.erase(it);
       global_it = global_plan.erase(global_it);
     }
+  }
+  
+  // cheaper because we skip checking against the robot position
+  // we are already keeping track of the current position within
+  // the plan so what we get here is already trimed down
+  bool transformPartialPlan(
+      const tf::TransformListener& tf,
+      const std::vector<geometry_msgs::PoseStamped>& global_plan,
+      const std::string& global_frame,
+      std::vector<geometry_msgs::PoseStamped>& transformed_plan)
+  {
+    transformed_plan.clear();
+
+    if (global_plan.empty()) {
+      ROS_ERROR("Received plan with zero length");
+      return false;
+    }
+
+    const geometry_msgs::PoseStamped& plan_pose = global_plan[0];
+
+    // short circuit if the frames already match
+    if (plan_pose.header.frame_id.compare(global_frame) == 0)
+    {
+      transformed_plan = global_plan;
+      return true;
+    }
+
+    try {
+      // get plan_to_global_transform from plan frame to global_frame
+      tf::StampedTransform plan_to_global_transform;
+      tf.waitForTransform(global_frame, ros::Time::now(),
+                          plan_pose.header.frame_id, plan_pose.header.stamp,
+                          plan_pose.header.frame_id, ros::Duration(0.5));
+      tf.lookupTransform(global_frame, ros::Time(),
+                         plan_pose.header.frame_id, plan_pose.header.stamp, 
+                         plan_pose.header.frame_id, plan_to_global_transform);
+
+      tf::Stamped<tf::Pose> tf_pose;
+      geometry_msgs::PoseStamped newer_pose;
+      for (std::vector<geometry_msgs::PoseStamped>::const_iterator pt = global_plan.begin(); pt != global_plan.end(); ++pt)
+      {
+        poseStampedMsgToTF(*pt, tf_pose);
+        tf_pose.setData(plan_to_global_transform * tf_pose);
+        tf_pose.stamp_ = plan_to_global_transform.stamp_;
+        tf_pose.frame_id_ = global_frame;
+        poseStampedTFToMsg(tf_pose, newer_pose);
+
+        transformed_plan.push_back(newer_pose);
+      }
+    }
+    catch(tf::LookupException& ex) {
+      ROS_ERROR("No Transform available Error: %s\n", ex.what());
+      return false;
+    }
+    catch(tf::ConnectivityException& ex) {
+      ROS_ERROR("Connectivity Error: %s\n", ex.what());
+      return false;
+    }
+    catch(tf::ExtrapolationException& ex) {
+      ROS_ERROR("Extrapolation Error: %s\n", ex.what());
+      if (!global_plan.empty())
+        ROS_ERROR("Global Frame: %s Plan Frame size %d: %s\n", global_frame.c_str(), (unsigned int)global_plan.size(), global_plan[0].header.frame_id.c_str());
+
+      return false;
+    }
+
+    return true;
   }
 
   bool transformGlobalPlan(

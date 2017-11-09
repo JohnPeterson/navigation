@@ -63,7 +63,7 @@ namespace base_local_planner {
    * @param next_min_index the output index
    * @return success
    */
-  bool getNextMinimaDistance(const tf::Stamped<tf::Pose>& global_pose, const std::vector<geometry_msgs::PoseStamped>& path, const size_t& start_index, size_t& next_min_index);
+  bool getNextMinimaDistance(const tf::Stamped<tf::Pose>& global_pose, const std::vector<geometry_msgs::PoseStamped>& path, const std::vector<double>& path_distances, const size_t& start_index, size_t& next_min_index, const double& jump_threshold = 0.0);
 
   /**
    * @brief x-y distance between two poses
@@ -121,6 +121,19 @@ namespace base_local_planner {
       const std::vector<geometry_msgs::PoseStamped>& global_plan,
       const tf::Stamped<tf::Pose>& global_robot_pose,
       const costmap_2d::Costmap2D& costmap,
+      const std::string& global_frame,
+      std::vector<geometry_msgs::PoseStamped>& transformed_plan);
+
+  /**
+   * @brief  Transforms the global plan of the robot from the planner frame to the frame of the costmap (Cheaper),
+   * selects only the (first) part of the plan that is within the costmap area.
+   * @param tf A reference to a transform listener
+   * @param global_plan The plan to be transformed
+   * @param global_frame The frame to transform the plan to
+   * @param transformed_plan Populated with the transformed plan
+   */
+  bool transformPartialPlan(const tf::TransformListener& tf,
+      const std::vector<geometry_msgs::PoseStamped>& global_plan,
       const std::string& global_frame,
       std::vector<geometry_msgs::PoseStamped>& transformed_plan);
 
