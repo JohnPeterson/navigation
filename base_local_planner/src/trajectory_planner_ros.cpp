@@ -486,10 +486,23 @@ namespace base_local_planner {
       double total_dist = 0.0;
       std::vector<geometry_msgs::PoseStamped> partial_plan;
       partial_plan.push_back(global_plan_[global_plan_cur_index_]);
-      for (int ii = global_plan_cur_index_; ii < global_plan_dists_.size(); ++ii)
+      double max_distance = 0.0;
+      for (int ii = global_plan_cur_index_; ii < global_plan_dists_.size() - 1; ++ii)
       {
+        // confirm that distance from start is increasing
+        double cur_distance = sqrt((global_plan_[global_plan_cur_index_].pose.position.x - global_plan_[ii + 1].pose.position.x) *
+                                   (global_plan_[global_plan_cur_index_].pose.position.x - global_plan_[ii + 1].pose.position.x) +
+                                   (global_plan_[global_plan_cur_index_].pose.position.y - global_plan_[ii + 1].pose.position.y) *
+                                   (global_plan_[global_plan_cur_index_].pose.position.y - global_plan_[ii + 1].pose.position.y));
+        if (cur_distance < max_distance)
+        {
+          break;
+        }
+        max_distance = cur_distance;
+
         partial_plan.push_back(global_plan_[ii + 1]);
         total_dist += global_plan_dists_[ii];
+
         if (total_dist > look_ahead_distance_)
         {
           break;
