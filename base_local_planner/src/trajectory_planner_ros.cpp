@@ -360,62 +360,17 @@ namespace base_local_planner {
       return false;
     }
 
-    int global_plan_cur_index = global_plan_cur_index_;
-
-    // update the current index for the new plan
+    // since the set plan is always repaired, it should start where we are
+    // so the starting index should always be 0;
     if (orig_global_plan.empty())
     {
-      global_plan_cur_index = -1; // set back to uninitialized
+      global_plan_cur_index_ = -1;
     }
     else
     {
-      if (global_plan_cur_index < 0)
-      {
-        // initialize the cur point, just find the closest point to the robot
-        tf::Stamped<tf::Pose> global_pose;
-        if (costmap_ros_->getRobotPose(global_pose)) {
-          global_plan_cur_index = 0;
-          double closest_distance = getGoalPositionDistance(global_pose, orig_global_plan[global_plan_cur_index].pose.position.x, orig_global_plan[global_plan_cur_index].pose.position.y);
-          for (int ii = 1; ii < orig_global_plan.size(); ++ii)
-          {
-            double next_distance = getGoalPositionDistance(global_pose, orig_global_plan[ii].pose.position.x, orig_global_plan[ii].pose.position.y);
-            if (next_distance < closest_distance)
-            {
-              global_plan_cur_index = ii;
-              closest_distance = next_distance;
-            }
-          }
-        }
-        // otherwise we will just leave it uninitialized
-      }
-      else
-      {
-        // if we have a previously initialized current point, find the closest point in
-        // the new plan to that point
-        int new_closest_point = 0;
-        double closest_distance = poseDistance(global_plan_[global_plan_cur_index], orig_global_plan[new_closest_point]);
-        for (int ii = 1; ii < orig_global_plan.size(); ++ii)
-        {
-          double test_distance = poseDistance(global_plan_[global_plan_cur_index], orig_global_plan[ii]);
-          if (test_distance < closest_distance)
-          {
-            new_closest_point = ii;
-            closest_distance = test_distance;
-          }
-        }
-        global_plan_cur_index = new_closest_point;
-      }
-    }
-    
-    // update the current index
-    {
       boost::lock_guard<boost::mutex> guard(global_plan_cur_index_mtx_);
-      global_plan_cur_index_ = global_plan_cur_index;
-
-      if (global_plan_cur_index_ >= 0)
-      {
-        global_plan_cur_pose_ = orig_global_plan[global_plan_cur_index_];
-      }
+      global_plan_cur_index_ = 0;
+      global_plan_cur_pose_ = orig_global_plan[global_plan_cur_index_];
     }
 
     //reset the global plan
