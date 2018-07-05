@@ -571,13 +571,14 @@ namespace base_local_planner {
     ROS_INFO("Cycle time: %.9f", t_diff);
     */
 
-    //pass along drive commands
-    cmd_vel.linear.x = drive_cmds.getOrigin().getX();
-    cmd_vel.linear.y = drive_cmds.getOrigin().getY();
-    cmd_vel.angular.z = tf::getYaw(drive_cmds.getRotation());
-
     //if we cannot move... tell someone
-    if (path.cost_ < 0) {
+    if (path.cost_ < 0)
+    {
+      //set the velocity command to zero
+      cmd_vel.linear.x = 0.0;
+      cmd_vel.linear.y = 0.0;
+      cmd_vel.angular.z = 0.0;
+
       ROS_DEBUG_NAMED("trajectory_planner_ros",
           "The rollout planner failed to find a valid plan. This means that the footprint of the robot was in collision for all simulated trajectories.");
       local_plan.clear();
@@ -585,6 +586,11 @@ namespace base_local_planner {
       publishPlan(local_plan, l_plan_pub_);
       return false;
     }
+
+    //pass along drive commands
+    cmd_vel.linear.x = drive_cmds.getOrigin().getX();
+    cmd_vel.linear.y = drive_cmds.getOrigin().getY();
+    cmd_vel.angular.z = tf::getYaw(drive_cmds.getRotation());
 
     ROS_DEBUG_NAMED("trajectory_planner_ros", "A valid velocity command of (%.2f, %.2f, %.2f) was found for this cycle.",
         cmd_vel.linear.x, cmd_vel.linear.y, cmd_vel.angular.z);

@@ -886,17 +886,20 @@ namespace base_local_planner{
       escaping_ = true;
     }
 
-    dist = hypot(x - escape_x_, y - escape_y_);
-
-    if (dist > escape_reset_dist_ ||
-        fabs(angles::shortest_angular_distance(escape_theta_, theta)) > escape_reset_theta_) {
-      escaping_ = false;
-    }
-
 
     //if the trajectory failed because the footprint hits something, we're still going to back up
-    if(best_traj->cost_ == -1.0)
+    // but only do that if we are escaping, if we bail out of escaping because we hit the escape distance
+    // and we still haven't escaped, we should just give up and stop not drive off to infinity
+    // because the two above if statements can cause us to keep resetting escape_x and y so we just back up
+    // infinitely if we are in unknown space
+    // so the solution is to not allow us to exit escaping down here, we only allow a proper exit up earlier
+    // but we do allow us to back up for a bit
+    dist = hypot(x - escape_x_, y - escape_y_);
+    if (escaping_ && (best_traj->cost_ == -1.0) && (dist <= escape_reset_dist_) &&
+       (fabs(angles::shortest_angular_distance(escape_theta_, theta)) <= escape_reset_theta_))
+    {
       best_traj->cost_ = 1.0;
+    }
 
     return *best_traj;
 

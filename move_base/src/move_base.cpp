@@ -1166,7 +1166,7 @@ namespace move_base {
             recovery_index_ = 0;
         }
         else {
-          ROS_DEBUG_NAMED("move_base", "The local planner could not find a valid plan.");
+          ROS_INFO_NAMED("move_base", "The local planner could not find a valid plan, last valid = %f patience = %f (s)", last_valid_control_.toSec(), controller_patience_);
           ros::Time attempt_end = last_valid_control_ + ros::Duration(controller_patience_);
 
           //check if we've tried to find a valid control for longer than our time limit
