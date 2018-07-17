@@ -879,7 +879,7 @@ namespace move_base {
       }
       //if we didn't get a plan and we are in the planning state (the robot isn't moving)
       else if(state_==PLANNING){
-        ROS_DEBUG_NAMED("move_base_plan_thread","No Plan...");
+        ROS_WARN_NAMED("move_base_plan_thread","No Plan...");
         ros::Time attempt_end = last_valid_plan_ + ros::Duration(planner_patience_);
 
         //check if we've tried to make a plan for over our time limit or our maximum number of retries
@@ -933,9 +933,12 @@ namespace move_base {
 
     // accept external plan if applicable
     partial_plan_.clear();
-    if (!pathToGlobalFrame(move_base_goal->path.poses, partial_plan_))
+    if (!move_base_goal->path.poses.empty())
     {
-      ROS_ERROR("path to global frame failed!");
+      if (!pathToGlobalFrame(move_base_goal->path.poses, partial_plan_))
+      {
+        ROS_ERROR("path to global frame failed!");
+      }
     }
     //for (std::vector<geometry_msgs::PoseStamped>::const_iterator pt = move_base_goal->path.poses.begin(); pt != move_base_goal->path.poses.end(); ++pt)
     //{
@@ -993,18 +996,21 @@ namespace move_base {
           lock.lock();
           planner_goal_ = goal;
 
-          if (!new_goal.path.poses.empty())
-          {
-            ROS_INFO("Move Base received new plan in action, %lu", new_goal.path.poses.size());
-          }
-
           // accept external plan if applicable
           partial_plan_.clear();
-          for (std::vector<geometry_msgs::PoseStamped>::const_iterator pt = new_goal.path.poses.begin(); pt != new_goal.path.poses.end(); ++pt)
+          if (!new_goal.path.poses.empty())
           {
-            geometry_msgs::PoseStamped path_point = goalToGlobalFrame(*pt);
-            partial_plan_.push_back(path_point);
+             ROS_INFO("Move Base received new plan in action, %lu", new_goal.path.poses.size());
+            if (!pathToGlobalFrame(new_goal.path.poses, partial_plan_))
+            {
+              ROS_ERROR("path to global frame failed!");
+            }
           }
+          //for (std::vector<geometry_msgs::PoseStamped>::const_iterator pt = new_goal.path.poses.begin(); pt != new_goal.path.poses.end(); ++pt)
+          //{
+          //  geometry_msgs::PoseStamped path_point = goalToGlobalFrame(*pt);
+          // partial_plan_.push_back(path_point);
+          //}
 
           runPlanner_ = true;
           planner_cond_.notify_one();
