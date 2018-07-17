@@ -570,10 +570,12 @@ namespace move_base {
     while (start_segment.empty() && (!partial_plan.empty()))
     {
       // check distance threshold
-      if (poseDistance(start, partial_plan.front()) >= max_repair_distance_)
+      double dist = poseDistance(start, partial_plan.front());
+      if (dist >= max_repair_distance_)
       {
         // we aren't going to repair the plan, we should just plan from scratch
         partial_plan.clear();
+        ROS_WARN("global replanning front distance threshold %f >= %f exceeded", dist, max_repair_distance_);
         return false;
       }
 
@@ -589,10 +591,12 @@ namespace move_base {
     while (end_segment.empty() && (!partial_plan.empty()))
     {
       // check distance threshold
-      if (poseDistance(goal, partial_plan.back()) >= max_repair_distance_)
+      double dist = poseDistance(goal, partial_plan.back());
+      if (dist >= max_repair_distance_)
       {
         // we aren't going to repair the plan, we should just plan from scratch
         partial_plan.clear();
+        ROS_WARN("global replanning back distance threshold %f >= %f exceeded", dist, max_repair_distance_);
         return false;
       }
 
@@ -622,6 +626,7 @@ namespace move_base {
       if(!planner_costmap_ros_->getCostmap()->worldToMap(it->pose.position.x, it->pose.position.y, mx, my))
       {
         // if we failed to look up the position, it is off the map, clear out this plan because it is invalid
+        ROS_WARN("global replanning failed to look up position, clearing");
         partial_plan.clear();
         return false;
       }
@@ -654,6 +659,7 @@ namespace move_base {
           {
             // if we failed to look up the position, it is off the map, clear out this plan because it is invalid
             partial_plan.clear();
+            ROS_WARN("global replanning failed to look up position, clearing");
             return false;
           }
         } while(planner_costmap_ros_->getCostmap()->getCost(mx, my) == costmap_2d::LETHAL_OBSTACLE);
@@ -764,6 +770,47 @@ namespace move_base {
     return global_pose_msg;
   }
 
+  bool MoveBase::pathToGlobalFrame(const std::vector<geometry_msgs::PoseStamped>& path, std::list<geometry_msgs::PoseStamped>& converted_path)
+  {
+    converted_path.clear();
+    if (path.empty())
+    {
+      return false;
+    }
+
+    std::string global_frame = planner_costmap_ros_->getGlobalFrameID();
+    std::string path_frame = path[0].header.frame_id;
+
+    try
+    {
+      tf::StampedTransform transform;
+      tf_.lookupTransform(global_frame, path_frame, ros::Time(0), transform);
+
+      //ROS_ERROR("child frame = %s", transform.child_frame_id_.c_str());
+      for (std::vector<geometry_msgs::PoseStamped>::const_iterator pt = path.begin(); pt != path.end(); ++pt)
+      {
+        tf::Stamped<tf::Pose> path_pose;
+        poseStampedMsgToTF(*pt, path_pose);
+
+        tf::Pose global_pose = transform * path_pose;
+        geometry_msgs::PoseStamped global_pose_msg;
+        tf::poseTFToMsg(global_pose, global_pose_msg.pose);
+        global_pose_msg.header.stamp = transform.stamp_;
+        global_pose_msg.header.frame_id = transform.frame_id_;
+
+        converted_path.push_back(global_pose_msg);
+      }
+    }
+    catch(tf::TransformException& ex)
+    {
+      ROS_WARN("Failed to transform the path frame from %s into the %s frame: %s",
+          path_frame.c_str(), global_frame.c_str(), ex.what());
+      return false;
+    }
+
+    return true;
+  }
+
   void MoveBase::wakePlanner(const ros::TimerEvent& event)
   {
     // we have slept long enough for rate
@@ -795,7 +842,7 @@ namespace move_base {
       if (!partial_plan_.empty())
       {
         // attempt plan repair using the existing partial plan
-        ROS_DEBUG_NAMED("move_base_plan_thread","Repairing...");
+        ROS_INFO_NAMED("move_base_plan_thread","Repairing...");
         gotPlan = repairPlan(temp_goal, partial_plan_, *planner_plan_);
       }
 
@@ -804,7 +851,7 @@ namespace move_base {
       // if we didn't already use the plan repair function, or it failed, plan from scratch
       if (!gotPlan)
       {
-        ROS_DEBUG_NAMED("move_base_plan_thread","Planning...");
+        ROS_INFO_NAMED("move_base_plan_thread","Planning from scratch");
         gotPlan = n.ok() && makePlan(temp_goal, *planner_plan_);
       }
       
@@ -886,11 +933,15 @@ namespace move_base {
 
     // accept external plan if applicable
     partial_plan_.clear();
-    for (std::vector<geometry_msgs::PoseStamped>::const_iterator pt = move_base_goal->path.poses.begin(); pt != move_base_goal->path.poses.end(); ++pt)
+    if (!pathToGlobalFrame(move_base_goal->path.poses, partial_plan_))
     {
-      geometry_msgs::PoseStamped path_point = goalToGlobalFrame(*pt);
-      partial_plan_.push_back(path_point);
+      ROS_ERROR("path to global frame failed!");
     }
+    //for (std::vector<geometry_msgs::PoseStamped>::const_iterator pt = move_base_goal->path.poses.begin(); pt != move_base_goal->path.poses.end(); ++pt)
+    //{
+    //  geometry_msgs::PoseStamped path_point = goalToGlobalFrame(*pt);
+    //  partial_plan_.push_back(path_point);
+    //}
 
     runPlanner_ = true;
     planner_cond_.notify_one();

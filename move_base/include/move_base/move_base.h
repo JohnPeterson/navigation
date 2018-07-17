@@ -184,6 +184,8 @@ namespace move_base {
 
       geometry_msgs::PoseStamped goalToGlobalFrame(const geometry_msgs::PoseStamped& goal_pose_msg);
 
+      bool pathToGlobalFrame(const std::vector<geometry_msgs::PoseStamped>& path, std::list<geometry_msgs::PoseStamped>& converted_path);
+      
       /**
        * @brief This is used to wake the planner at periodic intervals.
        */
