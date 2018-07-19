@@ -76,6 +76,17 @@ namespace base_local_planner {
           pt.total_cost = total_cost;
           cost_cloud_->push_back(pt);
         }
+        else
+        {
+          pt.x = x_coord;
+          pt.y = y_coord;
+          pt.z = z_coord;
+          pt.path_cost = -1;
+          pt.goal_cost = -1;
+          pt.occ_cost = -1;
+          pt.total_cost = -1;
+          cost_cloud_->push_back(pt);
+        }
       }
     }
     pub_.publish(*cost_cloud_);
