@@ -489,27 +489,31 @@ namespace move_base {
 
   bool MoveBase::repairPlan(const geometry_msgs::PoseStamped& goal, std::list<geometry_msgs::PoseStamped>& partial_plan, std::vector<geometry_msgs::PoseStamped>& plan)
   {
-    boost::unique_lock<costmap_2d::Costmap2D::mutex_t> lock(*(planner_costmap_ros_->getCostmap()->getMutex()));
+    //make sure to set the plan to be empty initially
+    plan.clear();
 
     // no plan to repair
     if (partial_plan.empty())
     {
+      ROS_ERROR("PlanRepair: failed, partial_plan was empty");
       return false;
     }
 
-    //make sure to set the plan to be empty initially
-    plan.clear();
+    boost::unique_lock<costmap_2d::Costmap2D::mutex_t> lock(*(planner_costmap_ros_->getCostmap()->getMutex()));
 
     //since this gets called on handle activate
     if(planner_costmap_ros_ == NULL) {
-      ROS_ERROR("Planner costmap ROS is NULL, unable to create global plan");
+      ROS_ERROR("PlanRepair: Planner costmap ROS is NULL, unable to create global plan");
+      partial_plan_.clear();
       return false;
     }
 
     //get the starting pose of the robot
     tf::Stamped<tf::Pose> global_pose;
-    if(!planner_costmap_ros_->getRobotPose(global_pose)) {
-      ROS_WARN("Unable to get starting pose of robot, unable to create global plan");
+    if (!planner_costmap_ros_->getRobotPose(global_pose))
+    {
+      ROS_WARN("PlanRepair: Unable to get starting pose of robot, unable to create global plan");
+      partial_plan_.clear();
       return false;
     }
 
@@ -525,9 +529,11 @@ namespace move_base {
     if (tc_ && (tc_->getProgress(local_planner_cur_pose)))
     {
       erase_pose_target = local_planner_cur_pose;
+      ROS_INFO("PlanRepair: local planner progress: [%f, %f]", local_planner_cur_pose.pose.position.x, local_planner_cur_pose.pose.position.y);
     }
 
     // find the point closest to the pose target
+    // which is either where the vehicle currently is, or where we are supposed to be along the global plan
     {
       double min_distance = std::numeric_limits<double>::infinity();
       for (std::list<geometry_msgs::PoseStamped>::iterator it = partial_plan.begin(); it != partial_plan.end(); ++it)
@@ -558,7 +564,11 @@ namespace move_base {
         it = next;
         ++erase_cnt;
       }
-      ROS_INFO("global replanning erased %lu elements %lu remaining", erase_cnt, partial_plan.size());
+
+      if (erase_cnt > 0)
+      {
+        ROS_INFO("PlanRepair: global replanning erased %lu elements %lu remaining", erase_cnt, partial_plan.size());
+      }
     }
 
     // TODO check to see if the start and goal are in collision
@@ -575,7 +585,7 @@ namespace move_base {
       {
         // we aren't going to repair the plan, we should just plan from scratch
         partial_plan.clear();
-        ROS_WARN("global replanning front distance threshold %f >= %f exceeded", dist, max_repair_distance_);
+        ROS_WARN("PlanRepair: global replanning front distance threshold %f >= %f exceeded", dist, max_repair_distance_);
         return false;
       }
 
@@ -584,6 +594,12 @@ namespace move_base {
       {
         partial_plan.pop_front();
       }
+    }
+
+    if (partial_plan.empty() || start_segment.empty())
+    {
+      ROS_WARN("PlanRepair: start segment planning failed...");
+      return false;
     }
 
     // plan from end of partial_plan to the goal
@@ -596,7 +612,7 @@ namespace move_base {
       {
         // we aren't going to repair the plan, we should just plan from scratch
         partial_plan.clear();
-        ROS_WARN("global replanning back distance threshold %f >= %f exceeded", dist, max_repair_distance_);
+        ROS_WARN("PlanRepair: global replanning back distance threshold %f >= %f exceeded", dist, max_repair_distance_);
         return false;
       }
 
@@ -605,6 +621,12 @@ namespace move_base {
       {
         partial_plan.pop_back();
       }
+    }
+
+    if (partial_plan.empty() || end_segment.empty())
+    {
+      ROS_WARN("PlanRepair: end segment planning failed...");
+      return false;
     }
 
     // now construct plan by appending concatenating things
@@ -626,13 +648,16 @@ namespace move_base {
       if(!planner_costmap_ros_->getCostmap()->worldToMap(it->pose.position.x, it->pose.position.y, mx, my))
       {
         // if we failed to look up the position, it is off the map, clear out this plan because it is invalid
-        ROS_WARN("global replanning failed to look up position, clearing");
+        ROS_ERROR("PlanRepair failed to look up position [%f, %f], clearing", it->pose.position.x, it->pose.position.y);
         partial_plan.clear();
+        plan.clear();
         return false;
       }
 
       if (planner_costmap_ros_->getCostmap()->getCost(mx, my) == costmap_2d::LETHAL_OBSTACLE)
       {
+        ROS_INFO("PlanRepair: lethal obstacle found within partial plan, repairing...");
+        size_t erase_cnt = 0;
         do
         {
           // if in collision, then it is the first in collision, lets delete it and keep going until we find
@@ -643,14 +668,16 @@ namespace move_base {
 
           // it is in collision
           partial_plan.erase(it);
+          erase_cnt++;
 
           // just a dummy check, this should never occur
           if (jt == partial_plan.end())
           {
             // something went wrong, because we knew we successfully planned to the last element of the path
             // to construct the end,
-            ROS_ERROR("last element reported in collision, but we already planned to this point successfull from the goal");
+            ROS_ERROR("PlanRepair: last element reported in collision, but we already planned to this point successfull from the goal");
             partial_plan.clear();
+            plan.clear();
             return false;
           }
 
@@ -659,18 +686,22 @@ namespace move_base {
           {
             // if we failed to look up the position, it is off the map, clear out this plan because it is invalid
             partial_plan.clear();
-            ROS_WARN("global replanning failed to look up position, clearing");
+            plan.clear();
+            ROS_WARN("PlanRepair: failed to look up position [%f, %f] clearing", it->pose.position.x, it->pose.position.y);
             return false;
           }
         } while(planner_costmap_ros_->getCostmap()->getCost(mx, my) == costmap_2d::LETHAL_OBSTACLE);
+
+        ROS_INFO("PlanRepair: erased %lu elements from the middle of the plan, %lu remaining", erase_cnt, partial_plan.size());
 
         // now the last point in plan is valid, and it should point to something valid
         // plan a repair segment
         std::vector<geometry_msgs::PoseStamped> repair_segment;
         if(!planner_->makePlan((*(plan.rbegin())), *it, repair_segment) || repair_segment.empty())
         {
-          ROS_ERROR("Repair failed!");
+          ROS_ERROR("PlanRepair: section repair failed!");
           partial_plan.clear();
+          plan.clear();
           return false;
         }
 
@@ -705,6 +736,8 @@ namespace move_base {
     path_msg.poses = plan;
 
     repaired_plan_pub_.publish(path_msg);
+
+    ROS_INFO("PlanRepair: succeeded plan contains %lu poses", plan.size());
 
     return true;
   }
@@ -788,6 +821,47 @@ namespace move_base {
 
       //ROS_ERROR("child frame = %s", transform.child_frame_id_.c_str());
       for (std::vector<geometry_msgs::PoseStamped>::const_iterator pt = path.begin(); pt != path.end(); ++pt)
+      {
+        tf::Stamped<tf::Pose> path_pose;
+        poseStampedMsgToTF(*pt, path_pose);
+
+        tf::Pose global_pose = transform * path_pose;
+        geometry_msgs::PoseStamped global_pose_msg;
+        tf::poseTFToMsg(global_pose, global_pose_msg.pose);
+        global_pose_msg.header.stamp = transform.stamp_;
+        global_pose_msg.header.frame_id = transform.frame_id_;
+
+        converted_path.push_back(global_pose_msg);
+      }
+    }
+    catch(tf::TransformException& ex)
+    {
+      ROS_WARN("Failed to transform the path frame from %s into the %s frame: %s",
+          path_frame.c_str(), global_frame.c_str(), ex.what());
+      return false;
+    }
+
+    return true;
+  }
+
+  bool MoveBase::pathToGlobalFrame(const std::list<geometry_msgs::PoseStamped>& path, std::list<geometry_msgs::PoseStamped>& converted_path)
+  {
+    converted_path.clear();
+    if (path.empty())
+    {
+      return false;
+    }
+
+    std::string global_frame = planner_costmap_ros_->getGlobalFrameID();
+    std::string path_frame = path.front().header.frame_id;
+
+    try
+    {
+      tf::StampedTransform transform;
+      tf_.lookupTransform(global_frame, path_frame, ros::Time(0), transform);
+
+      //ROS_ERROR("child frame = %s", transform.child_frame_id_.c_str());
+      for (std::list<geometry_msgs::PoseStamped>::const_iterator pt = path.begin(); pt != path.end(); ++pt)
       {
         tf::Stamped<tf::Pose> path_pose;
         poseStampedMsgToTF(*pt, path_pose);
@@ -976,8 +1050,10 @@ namespace move_base {
         c_freq_change_ = false;
       }
 
-      if(as_->isPreemptRequested()){
-        if(as_->isNewGoalAvailable()){
+      if(as_->isPreemptRequested())
+      {
+        if(as_->isNewGoalAvailable())
+        {
           //if we're active and a new goal is available, we'll accept it, but we won't shut anything down
           move_base_msgs::MoveBaseGoal new_goal = *as_->acceptNewGoal();
 
@@ -1050,6 +1126,11 @@ namespace move_base {
         //we have a new goal so make sure the planner is awake
         lock.lock();
         planner_goal_ = goal;
+
+        std::list<geometry_msgs::PoseStamped> transformed_partial_plan;
+        pathToGlobalFrame(partial_plan_, transformed_partial_plan);
+        partial_plan_ = transformed_partial_plan;
+
         runPlanner_ = true;
         planner_cond_.notify_one();
         lock.unlock();
