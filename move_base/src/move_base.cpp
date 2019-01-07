@@ -58,7 +58,7 @@ namespace move_base {
     bgp_loader_("nav_core", "nav_core::BaseGlobalPlanner"),
     blp_loader_("nav_core", "nav_core::BaseLocalPlanner"), 
     recovery_loader_("nav_core", "nav_core::RecoveryBehavior"),
-    planner_plan_(NULL), latest_plan_(NULL), controller_plan_(NULL),
+    planner_plan_(NULL), latest_plan_(NULL), controller_plan_(NULL),last_swap_controller_(false),
     runPlanner_(false), setup_(false), p_freq_change_(false), c_freq_change_(false), new_global_plan_(false) {
 
     as_ = new MoveBaseActionServer(ros::NodeHandle(), "move_base", boost::bind(&MoveBase::executeCb, this, _1), false);
@@ -888,6 +888,7 @@ namespace move_base {
   void MoveBase::wakePlanner(const ros::TimerEvent& event)
   {
     // we have slept long enough for rate
+    ROS_DEBUG("Notify One WakePlanner 892");
     planner_cond_.notify_one();
   }
 
@@ -909,7 +910,6 @@ namespace move_base {
 
       //time to plan! get a copy of the goal
       geometry_msgs::PoseStamped temp_goal = planner_goal_;
-
       planner_plan_->clear();
 
       bool gotPlan = false;
@@ -935,13 +935,15 @@ namespace move_base {
         //pointer swap the plans under mutex (the controller will pull from latest_plan_)
         std::vector<geometry_msgs::PoseStamped>* temp_plan = planner_plan_;
 
+        ROS_DEBUG("Swapping pointers in planner");
+
         lock.lock();
         planner_plan_ = latest_plan_;
         latest_plan_ = temp_plan;
         last_valid_plan_ = ros::Time::now();
         planning_retries_ = 0;
         new_global_plan_ = true;
-
+        last_swap_controller_ = false;
         ROS_DEBUG_NAMED("move_base_plan_thread","Generated a plan from the base_global_planner");
 
         //make sure we only start the controller if we still haven't reached the goal
@@ -1021,6 +1023,7 @@ namespace move_base {
     //}
 
     runPlanner_ = true;
+    ROS_DEBUG("Notify One 1035");
     planner_cond_.notify_one();
     lock.unlock();
 
@@ -1089,6 +1092,7 @@ namespace move_base {
           //}
 
           runPlanner_ = true;
+           ROS_DEBUG("Notify One 1104");
           planner_cond_.notify_one();
           lock.unlock();
 
@@ -1132,6 +1136,7 @@ namespace move_base {
         partial_plan_ = transformed_partial_plan;
 
         runPlanner_ = true;
+        ROS_DEBUG("Notify One 1148");
         planner_cond_.notify_one();
         lock.unlock();
 
@@ -1170,6 +1175,7 @@ namespace move_base {
     //wake up the planner thread so that it can exit cleanly
     lock.lock();
     runPlanner_ = true;
+    ROS_DEBUG("Notify One 1187");
     planner_cond_.notify_one();
     lock.unlock();
 
@@ -1228,11 +1234,19 @@ namespace move_base {
       std::vector<geometry_msgs::PoseStamped>* temp_plan = controller_plan_;
 
       boost::unique_lock<boost::recursive_mutex> lock(planner_mutex_);
+
+      ROS_DEBUG("Swapping pointers in controller");
+      if (last_swap_controller_)
+      {
+        ROS_ERROR("CONTROLLER: TRYING TO SWAP WRONG PLAN IN");
+        return false;
+      }
       controller_plan_ = latest_plan_;
       latest_plan_ = temp_plan;
+      last_swap_controller_ = true;
       lock.unlock();
       ROS_DEBUG_NAMED("move_base","pointers swapped!");
-
+      
       if(!tc_->setPlan(*controller_plan_)){
         //ABORT and SHUTDOWN COSTMAPS
         ROS_ERROR("Failed to pass global plan to the controller, aborting.");
@@ -1259,6 +1273,7 @@ namespace move_base {
         {
           boost::recursive_mutex::scoped_lock lock(planner_mutex_);
           runPlanner_ = true;
+          ROS_DEBUG("Notify One 1289");
           planner_cond_.notify_one();
         }
         ROS_DEBUG_NAMED("move_base","Waiting for plan, in the planning state.");
@@ -1293,7 +1308,6 @@ namespace move_base {
         
         {
          boost::unique_lock<costmap_2d::Costmap2D::mutex_t> lock(*(controller_costmap_ros_->getCostmap()->getMutex()));
-        
         if(tc_->computeVelocityCommands(cmd_vel)){
           ROS_DEBUG_NAMED( "move_base", "Got a valid command from the local planner: %.3lf, %.3lf, %.3lf",
                            cmd_vel.linear.x, cmd_vel.linear.y, cmd_vel.angular.z );
@@ -1324,6 +1338,7 @@ namespace move_base {
             //enable the planner thread in case it isn't running on a clock
             boost::unique_lock<boost::recursive_mutex> lock(planner_mutex_);
             runPlanner_ = true;
+            ROS_DEBUG("Notify One 1355");
             planner_cond_.notify_one();
             lock.unlock();
           }

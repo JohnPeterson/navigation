@@ -470,6 +470,7 @@ namespace base_local_planner {
         }
       }
 
+      ROS_DEBUG("partial Plan start: %.2f, %.2f end: %.2f, %.2f",partial_plan.front().pose.position.x,partial_plan.front().pose.position.y,partial_plan.back().pose.position.x,partial_plan.back().pose.position.y);
       //get the global plan in our frame
       if (!transformPartialPlan(*tf_, partial_plan, global_frame_, transformed_plan)) {
         ROS_WARN("Could not transform the global plan to the frame of the controller");
